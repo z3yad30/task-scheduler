@@ -79,21 +79,19 @@ Or delete them manually from your file explorer.
 - **ORA_SETUP.md** - Quick start for Ora feature
 - **PROJECT_FILES_GUIDE.md** - This file (explains what to keep/delete)
 
-## 🔐 Hardcoded Credentials
+## 🔐 Email Configuration
 
-Located in `app.js` around line 1373:
+Located in `app.js`:
 
 ```javascript
 const ORA_EMAIL_CONFIG = {
-    senderEmail: 'lio.messi.official8@gmail.com',
-    appPassword: 'mtyn stzo rkpe rgry'
+    publicKey: '',
+    serviceId: '',
+    templateId: ''
 };
 ```
 
-These are currently hardcoded for development. Consider these for production:
-- Use EmailJS service (frontend email sending)
-- Move to a proper backend
-- Use environment variables (if using a backend)
+Configure these values from an EmailJS account. Gmail SMTP passwords must never be stored in frontend code.
 
 ## ✨ What Changed
 
@@ -106,7 +104,7 @@ These are currently hardcoded for development. Consider these for production:
 ### Now (Static Website)
 - ✅ Just open index.html
 - ✅ No backend needed
-- ✅ Email credentials hardcoded in app.js
+- ✅ EmailJS public configuration is in app.js
 - ✅ All data in browser localStorage
 - ✅ Completely portable
 
@@ -138,8 +136,8 @@ Works on:
 2. **No Dependencies**: No npm packages needed
 3. **No Build Step**: Just open the HTML file
 4. **Local Storage**: All data saved in browser
-5. **Hardcoded Credentials**: Email config is in the code
-6. **Email Notifications**: Logged to browser console (not actually sent)
+5. **EmailJS Config**: Public EmailJS IDs are configured in app.js
+6. **Email Notifications**: Sent through EmailJS when configured
 
 ## 🎓 Next Steps
 

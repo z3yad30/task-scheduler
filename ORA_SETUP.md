@@ -13,7 +13,7 @@ This is a pure client-side application - no backend server needed!
 
 ✅ **Daily Tasks** - Add tasks with start/end times  
 ✅ **Auto Status** - Tasks automatically update: pending → active → completed  
-✅ **Notifications** - Check browser console for task notifications  
+✅ **Notifications** - Sends through EmailJS when configured  
 ✅ **Work Hours** - Track total daily work hours  
 ✅ **Auto-Cleanup** - Tasks auto-delete after 24 hours  
 ✅ **Email Storage** - User email saved for notifications  
@@ -21,17 +21,17 @@ This is a pure client-side application - no backend server needed!
 
 ## 📧 Email Setup
 
-Email notifications are logged to **browser console**. To view:
-1. Open browser DevTools: `F12`
-2. Go to **Console** tab
-3. Perform task actions to see notifications
+Email delivery uses EmailJS because a static browser page cannot connect to Gmail SMTP directly.
 
-**Hardcoded Email Config** (in app.js):
+1. Create an EmailJS service and email template at https://www.emailjs.com/
+2. Add the template variables `to_email`, `subject`, and `message`
+3. Set these values in `app.js`:
 ```javascript
-ORA_EMAIL_CONFIG = {
-    senderEmail: 'lio.messi.official8@gmail.com',
-    appPassword: 'mtyn stzo rkpe rgry'
-}
+const ORA_EMAIL_CONFIG = {
+    publicKey: 'your_emailjs_public_key',
+    serviceId: 'your_emailjs_service_id',
+    templateId: 'your_emailjs_template_id'
+};
 ```
 
 ## 🔧 Files Structure
@@ -83,7 +83,7 @@ Open DevTools (F12) → Console tab to see:
 1. Click ⏰ **Ora**
 2. Scroll to "Daily Summary"
 3. Click "📧 Send Summary to Email"
-4. Check console for output
+4. Check the recipient inbox and browser console for delivery errors
 
 ## 💾 Data Storage
 
@@ -96,12 +96,13 @@ All data stored in browser **localStorage**:
 
 ## ⚙️ Customization
 
-### Change Email Credentials
-Edit `app.js` line ~1373:
+### Configure EmailJS
+Edit `app.js`:
 ```javascript
 const ORA_EMAIL_CONFIG = {
-    senderEmail: 'your-email@gmail.com',
-    appPassword: 'your-app-password'
+    publicKey: 'your_emailjs_public_key',
+    serviceId: 'your_emailjs_service_id',
+    templateId: 'your_emailjs_template_id'
 };
 ```
 
@@ -111,17 +112,12 @@ Edit `app.js` line ~9:
 const SESSION_DURATION = 3 * 60 * 60 * 1000; // 3 hours
 ```
 
-### Add Email Sending (Optional)
-To actually send emails from frontend, use EmailJS:
-1. Sign up at https://www.emailjs.com/
-2. Get API keys
-3. Add EmailJS script to index.html
-4. Update notification functions in app.js
+EmailJS is already loaded in `index.html`. Never place a Gmail password or SMTP credentials in this repository.
 
 ## 🔐 Security Notes
 
-- Credentials are hardcoded (for static site use only)
-- Never share this code publicly with credentials exposed
+- EmailJS public configuration is visible in frontend code by design
+- Never share Gmail passwords or SMTP credentials publicly
 - LocalStorage is browser-local only, not encrypted
 - For production, use a backend service
 

@@ -1372,11 +1372,38 @@ let oraSchedulerInterval = null;
 let oraLastNotifiedTime = {};
 let oraCloudRecordId = null;
 
-// Email Configuration (Hardcoded)
+// EmailJS configuration. Create a free EmailJS service/template and add its
+// public key here; Gmail SMTP credentials must never be placed in frontend code.
 const ORA_EMAIL_CONFIG = {
-    senderEmail: 'lio.messi.official8@gmail.com',
-    appPassword: 'mtyn stzo rkpe rgry'
+    publicKey: '',
+    serviceId: '',
+    templateId: ''
 };
+
+function isOraEmailConfigured() {
+    return Boolean(
+        window.emailjs &&
+        ORA_EMAIL_CONFIG.publicKey &&
+        ORA_EMAIL_CONFIG.serviceId &&
+        ORA_EMAIL_CONFIG.templateId
+    );
+}
+
+async function sendOraEmail(subject, message) {
+    const recipient = currentUser?.email;
+    if (!recipient) throw new Error('The signed-in user has no email address.');
+    if (!isOraEmailConfigured()) {
+        throw new Error('EmailJS is not configured. Add its public key, service ID, and template ID in app.js.');
+    }
+
+    window.emailjs.init({ publicKey: ORA_EMAIL_CONFIG.publicKey });
+    await window.emailjs.send(ORA_EMAIL_CONFIG.serviceId, ORA_EMAIL_CONFIG.templateId, {
+        to_email: recipient,
+        subject,
+        message,
+        task_name: subject
+    });
+}
 
 /**
  * Load Ora daily tasks from localStorage
@@ -1670,43 +1697,64 @@ function findNextTask(currentTask) {
 /**
  * Send task start notification
  */
-function sendOraTaskNotification(task, type) {
+async function sendOraTaskNotification(task, type) {
     const userEmail = currentUser?.email;
     if (!userEmail) return;
-    
-    console.log(`📧 Email notification for ${userEmail}:`);
-    console.log(`Task: "${task.name}" started at ${task.startTime}`);
-    showToast(`⏰ Task started: ${task.name}`, 'info');
+
+    try {
+        await sendOraEmail(
+            `Task started: ${task.name}`,
+            `Your task "${task.name}" started at ${task.startTime}.`
+        );
+        showToast(`Email sent for ${task.name}`, 'success');
+    } catch (error) {
+        console.error('Ora start email error:', error);
+        showToast(error.message, 'warning');
+    }
 }
 
 /**
  * Send task transition notification (task end + next task start)
  */
-function sendOraTaskTransitionNotification(completedTask, nextTask) {
+async function sendOraTaskTransitionNotification(completedTask, nextTask) {
     const userEmail = currentUser?.email;
     if (!userEmail) return;
-    
-    console.log(`📧 Email notification for ${userEmail}:`);
-    console.log(`Task "${completedTask.name}" completed. Next task: "${nextTask.name}" starting at ${nextTask.startTime}`);
-    showToast(`✅ Task complete! Next up: ${nextTask.name}`, 'success');
+
+    try {
+        await sendOraEmail(
+            `Task completed: ${completedTask.name}`,
+            `"${completedTask.name}" ended. Your next task, "${nextTask.name}", starts at ${nextTask.startTime}.`
+        );
+        showToast(`Email sent for ${nextTask.name}`, 'success');
+    } catch (error) {
+        console.error('Ora transition email error:', error);
+        showToast(error.message, 'warning');
+    }
 }
 
 /**
  * Send task completion notification
  */
-function sendOraTaskCompletionNotification(task) {
+async function sendOraTaskCompletionNotification(task) {
     const userEmail = currentUser?.email;
     if (!userEmail) return;
-    
-    console.log(`📧 Email notification for ${userEmail}:`);
-    console.log(`Task "${task.name}" completed at ${task.endTime}. Great job!`);
-    showToast(`✅ Task completed: ${task.name}!`, 'success');
+
+    try {
+        await sendOraEmail(
+            `Task completed: ${task.name}`,
+            `Your task "${task.name}" ended at ${task.endTime}.`
+        );
+        showToast(`Completion email sent for ${task.name}`, 'success');
+    } catch (error) {
+        console.error('Ora completion email error:', error);
+        showToast(error.message, 'warning');
+    }
 }
 
 /**
  * Send daily summary notification
  */
-function sendOraDailySummary() {
+async function sendOraDailySummary() {
     const userEmail = currentUser?.email;
     if (!userEmail) {
         showToast('User email not found', 'warning');
@@ -1718,12 +1766,17 @@ function sendOraDailySummary() {
         return;
     }
     
-    console.log(`📧 Daily summary for ${userEmail}:`);
-    console.log(`Date: ${new Date().toLocaleDateString()}`);
-    oraDailyTasks.forEach(task => {
-        console.log(`  • ${task.name} (${task.startTime} - ${task.endTime})`);
-    });
-    showToast('✅ Daily summary logged to console!', 'success');
+    const summary = oraDailyTasks
+        .map(task => `${task.name}: ${task.startTime} - ${task.endTime}${task.description !== 'none' ? ` (${task.description})` : ''}`)
+        .join('\n');
+
+    try {
+        await sendOraEmail(`Daily task summary - ${new Date().toLocaleDateString()}`, summary);
+        showToast('Daily summary email sent.', 'success');
+    } catch (error) {
+        console.error('Ora summary email error:', error);
+        showToast(error.message, 'warning');
+    }
 }
 
 /**
