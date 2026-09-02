@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Pipeline Engine</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script>
+        (function() {
+            const theme = localStorage.getItem('gts_theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+            const SESSION_KEY = 'gts_session';
+            const SESSION_DURATION = 3 * 60 * 60 * 1000;
+            try {
+                const raw = localStorage.getItem(SESSION_KEY);
+                if (raw) {
+                    const session = JSON.parse(raw);
+                    if (Date.now() - session.timestamp <= SESSION_DURATION) {
+                        document.documentElement.classList.add('session-active');
+                    }
+                }
+            } catch (e) {}
+        })();
+    </script>
+</head>
+<body>
+
+    <!-- AUTH -->
+    <div id="auth-container" class="auth-wrapper">
+        <button id="auth-theme-toggle" class="theme-toggle-floating" type="button" aria-label="Toggle theme">☀️</button>
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="auth-logo" aria-hidden="true">⚡</div>
+                <h2>Nexus Scheduler</h2>
+                <p id="auth-subtitle">Sign in to manage your dependency pipelines</p>
+            </div>
+            <form id="auth-form" autocomplete="on">
+                <div class="form-group">
+                    <label for="auth-username">Username</label>
+                    <input type="text" id="auth-username" required placeholder="Enter username" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="auth-password">Password</label>
+                    <input type="password" id="auth-password" required placeholder="Enter password" autocomplete="current-password">
+                </div>
+                <div class="form-group" id="email-form-group" style="display:none;">
+                    <label for="auth-email">Email</label>
+                    <input type="email" id="auth-email" placeholder="your@email.com" autocomplete="email">
+                </div>
+                <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">Sign In</button>
+            </form>
+            <div class="auth-footer">
+                <p id="auth-toggle-text">
+                    Don't have an account? <a href="#" id="auth-toggle-link">Register here</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="dashboard-container" class="dashboard-wrapper hidden">
+
+        <header class="main-header">
+            <div class="brand">
+                <div class="brand-icon" aria-hidden="true">⚡</div>
+                <h1>Nexus</h1>
+            </div>
+            <nav class="top-nav" aria-label="Primary actions">
+                <button id="nav-add-task" class="btn btn-primary">
+                    <span aria-hidden="true">＋</span>
+                    <span class="btn-label">New Task</span>
+                </button>
+                <button id="nav-toggle-view" class="btn btn-secondary" aria-label="Toggle between pipeline and graph view">
+                    <span aria-hidden="true">🕸️</span>
+                    <span class="btn-label" id="view-label">Graph</span>
+                </button>
+                <button id="nav-ora" class="btn btn-secondary" aria-label="Open Ora daily task executor" title="Ora - Daily Task Executor">
+                    <span aria-hidden="true">⏰</span>
+                    <span class="btn-label">Ora</span>
+                </button>
+                <button id="nav-task-list" class="btn btn-secondary btn-icon" aria-label="Open task list">
+                    <span aria-hidden="true">☰</span>
+                </button>
+            </nav>
+            <div class="user-profile">
+                <button id="theme-toggle-btn" class="btn btn-secondary btn-icon" title="Toggle theme" aria-label="Toggle theme">☀️</button>
+                <span id="welcome-user" class="welcome-text">Welcome</span>
+                <button id="logout-btn" class="btn btn-secondary btn-sm">Sign out</button>
+            </div>
+        </header>
+
+        <main class="workspace">
+            <!-- Sidebar (desktop) -->
+            <aside class="sidebar" id="sidebar" aria-label="Task directory">
+                <div class="sidebar-header">
+                    <h2>Task Directory</h2>
+                    <span class="task-count" id="task-count" aria-label="0 tasks">0</span>
+                </div>
+                <div class="task-list" id="task-list-container" role="list"></div>
+            </aside>
+
+            <!-- Main Content -->
+            <section class="main-content" aria-label="Task pipeline and analytics">
+
+                <!-- Pipeline View -->
+                <div id="pipeline-view" class="pipeline-area">
+                    <div class="pipeline-toolbar">
+                        <div class="pipeline-title-group">
+                            <h3>Task Pipeline</h3>
+                            <span class="pipeline-subtitle" id="pipeline-subtitle">Execution order</span>
+                        </div>
+                        <div class="pipeline-legend" aria-label="Status legend">
+                            <span class="legend-chip legend-notstarted">Not Started</span>
+                            <span class="legend-chip legend-inprogress">In Progress</span>
+                            <span class="legend-chip legend-completed">Completed</span>
+                        </div>
+                    </div>
+                    <div id="pipeline-container" class="pipeline-scroll" role="list" aria-label="Task pipeline">
+                        <div id="pipeline-empty" class="pipeline-empty hidden">
+                            <div class="empty-icon" aria-hidden="true">📋</div>
+                            <p>No tasks yet</p>
+                            <span>Click "New Task" to build your pipeline</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Graph View -->
+                <div id="graph-view" class="graph-area hidden">
+                    <div class="graph-toolbar">
+                        <div class="graph-title-group">
+                            <div class="graph-title">
+                                <span class="live-indicator" aria-hidden="true"></span>
+                                <h3>Dependency Graph</h3>
+                            </div>
+                            <div class="graph-legend" aria-label="Graph status legend">
+                                <span class="legend-item"><span class="legend-dot legend-notstarted" aria-hidden="true"></span><span>[ ] Not Started</span></span>
+                                <span class="legend-item"><span class="legend-dot legend-inprogress" aria-hidden="true"></span><span>[~] In Progress</span></span>
+                                <span class="legend-item"><span class="legend-dot legend-completed" aria-hidden="true"></span><span>[✓] Completed</span></span>
+                            </div>
+                        </div>
+                        <div class="graph-controls" aria-label="Graph view controls">
+                            <button id="graph-fit" class="btn btn-sm btn-secondary" title="Fit graph to screen">Fit</button>
+                            <button id="graph-zoom-out" class="btn btn-sm btn-secondary" title="Zoom out" aria-label="Zoom out">−</button>
+                            <button id="graph-zoom-in" class="btn btn-sm btn-secondary" title="Zoom in" aria-label="Zoom in">+</button>
+                        </div>
+                    </div>
+                    <div id="network-visualization" class="graph-canvas" role="img" aria-label="Interactive task dependency graph. Tap a node to view task details."></div>
+                    <div id="graph-empty" class="graph-empty hidden">
+                        <div class="empty-graph-icon" aria-hidden="true">🕸️</div>
+                        <p>No tasks to visualize</p>
+                        <span>Create your first task to see the dependency graph</span>
+                    </div>
+                </div>
+
+                <!-- Analytics -->
+                <div class="analytics-panel" aria-label="Analytics tools">
+                    <div class="analytics-toolbar" role="group" aria-label="Task analysis actions">
+                        <button onclick="runCycleDetection()" class="btn btn-analytics">Detect Cycles</button>
+                        <button onclick="runTopologicalSort()" class="btn btn-analytics">Topo Sort</button>
+                        <button onclick="sortByPriority()" class="btn btn-analytics">Priority</button>
+                        <button onclick="sortByDeadline()" class="btn btn-analytics">Deadline</button>
+                        <button onclick="clearOutput()" class="btn btn-analytics btn-analytics-muted">Clear</button>
+                    </div>
+                    <div id="output-box" class="console-box hidden" role="log" aria-live="polite" aria-atomic="true"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- OVERLAYS -->
+    <div id="overlay-backdrop" class="overlay-backdrop hidden" onclick="closeAllPanels()" aria-hidden="true"></div>
+
+    <!-- Add Task Panel -->
+    <div id="add-task-panel" class="slide-panel hidden" role="dialog" aria-modal="true" aria-labelledby="add-task-title">
+        <div class="slide-panel-handle" aria-hidden="true"></div>
+        <div class="slide-panel-header">
+            <h3 id="add-task-title">Create Task</h3>
+            <button onclick="closePanel('add-task-panel')" class="close-btn" aria-label="Close create task panel">&times;</button>
+        </div>
+        <div class="slide-panel-body">
+            <form id="task-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="taskName">Task Name <span aria-label="required">*</span></label>
+                    <input type="text" id="taskName" required placeholder="e.g., Database Migration">
+                </div>
+                <div class="form-group">
+                    <label for="dependencies">Dependencies <span class="label-hint">Hold Ctrl/Cmd to select multiple</span></label>
+                    <select id="dependencies" multiple size="4"></select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="priority">Priority (0–10)</label>
+                        <input type="number" id="priority" min="0" max="10" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="deadline">Deadline</label>
+                        <input type="date" id="deadline">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" rows="3" placeholder="Describe the task…"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Links <span class="label-hint">Add each URL separately</span></label>
+                    <div id="links-input-list" class="links-input-list"></div>
+                    <button type="button" class="btn btn-secondary add-link-btn" data-links-container="links-input-list">＋ Add link</button>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Create Task</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Saved Tasks Panel (mobile) -->
+    <div id="saved-tasks-panel" class="slide-panel hidden" role="dialog" aria-modal="true" aria-labelledby="saved-tasks-title">
+        <div class="slide-panel-handle" aria-hidden="true"></div>
+        <div class="slide-panel-header">
+            <h3 id="saved-tasks-title">All Tasks</h3>
+            <button onclick="closePanel('saved-tasks-panel')" class="close-btn" aria-label="Close task list">&times;</button>
+        </div>
+        <div class="slide-panel-body">
+            <div id="saved-task-list" class="task-list" role="list"></div>
+        </div>
+    </div>
+
+    <!-- Task Detail Panel -->
+    <div id="task-detail-panel" class="slide-panel hidden" role="dialog" aria-modal="true" aria-labelledby="detail-name">
+        <div class="slide-panel-handle" aria-hidden="true"></div>
+        <div class="slide-panel-header">
+            <h3>Task Details</h3>
+            <button onclick="closePanel('task-detail-panel')" class="close-btn" aria-label="Close task details">&times;</button>
+        </div>
+        <div class="slide-panel-body">
+            <div class="detail-header">
+                <div class="detail-status-row">
+                    <span id="detail-status-dot" class="status-dot" aria-hidden="true"></span>
+                    <span id="detail-status-text" class="status-text"></span>
+                </div>
+                <h2 id="detail-name" class="detail-title"></h2>
+            </div>
+            <dl class="detail-dl">
+                <div class="detail-row">
+                    <dt>Priority</dt>
+                    <dd id="detail-priority"></dd>
+                </div>
+                <div class="detail-row">
+                    <dt>Deadline</dt>
+                    <dd id="detail-deadline"></dd>
+                </div>
+                <div class="detail-row">
+                    <dt>Dependencies</dt>
+                    <dd id="detail-dependencies" class="detail-mono"></dd>
+                </div>
+                <div class="detail-row detail-row-full">
+                    <dt>Description</dt>
+                    <dd id="detail-description"></dd>
+                </div>
+                <div class="detail-row detail-row-full">
+                    <dt>Links</dt>
+                    <dd id="detail-links" class="detail-links"></dd>
+                </div>
+            </dl>
+            <fieldset class="status-actions" aria-label="Update task status">
+                <legend class="sr-only">Update task status</legend>
+                <button id="status-notstarted" class="btn btn-status btn-status-danger" type="button">Not Started</button>
+                <button id="status-inprogress" class="btn btn-status btn-status-warning" type="button">In Progress</button>
+                <button id="status-end" class="btn btn-status btn-status-success" type="button">Completed</button>
+            </fieldset>
+            <div class="detail-actions">
+                <button id="detail-edit-btn" class="btn btn-secondary" style="flex:1" type="button">Edit</button>
+                <button id="detail-delete-btn" class="btn btn-danger" style="flex:1" type="button">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+        <div class="modal-surface">
+            <div class="modal-header">
+                <h3 id="edit-modal-title">Edit Task</h3>
+                <button onclick="closeModal()" class="close-btn" aria-label="Close edit modal">&times;</button>
+            </div>
+            <form id="edit-form" autocomplete="off">
+                <input type="hidden" id="edit-old-name">
+                <div class="form-group">
+                    <label for="edit-name">Task Name</label>
+                    <input type="text" id="edit-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-dependencies">Dependencies <span class="label-hint">Hold Ctrl/Cmd to select multiple</span></label>
+                    <select id="edit-dependencies" multiple size="4"></select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-priority">Priority (0–10)</label>
+                        <input type="number" id="edit-priority" min="0" max="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-deadline">Deadline</label>
+                        <input type="date" id="edit-deadline">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="edit-status">Status</label>
+                    <select id="edit-status">
+                        <option value="Not Started">Not Started</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="End">Completed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Links <span class="label-hint">Add each URL separately</span></label>
+                    <div id="edit-links-input-list" class="links-input-list"></div>
+                    <button type="button" class="btn btn-secondary add-link-btn" data-links-container="edit-links-input-list">＋ Add link</button>
+                </div>
+                <div class="form-group">
+                    <label for="edit-description">Description</label>
+                    <textarea id="edit-description" rows="3"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" onclick="closeModal()" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Ora Daily Task Executor Panel -->
+    <div id="ora-panel" class="slide-panel hidden" role="dialog" aria-modal="true" aria-labelledby="ora-title">
+        <div class="slide-panel-handle" aria-hidden="true"></div>
+        <div class="slide-panel-header">
+            <h3 id="ora-title">⏰ Ora - Daily Task Executor</h3>
+            <button onclick="closePanel('ora-panel')" class="close-btn" aria-label="Close Ora panel">&times;</button>
+        </div>
+        <div class="slide-panel-body">
+            <div class="ora-intro">
+                <p>Track and manage your daily tasks with automatic email reminders at task start, end, and break times.</p>
+            </div>
+
+            <!-- Add Daily Task Form -->
+            <div class="ora-add-task-section">
+                <h4>Add Daily Task</h4>
+                <form id="ora-task-form" autocomplete="off">
+                    <div class="form-group">
+                        <label for="ora-task-name">Task Name <span aria-label="required">*</span></label>
+                        <input type="text" id="ora-task-name" required placeholder="e.g., Design Sprint">
+                    </div>
+                    <div class="form-group">
+                        <label for="ora-task-description">Description <span class="label-hint">Optional</span></label>
+                        <textarea id="ora-task-description" rows="2" placeholder="Add details about this task (optional)"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="ora-task-start">Start Time <span aria-label="required">*</span></label>
+                            <div class="time-input-group">
+                                <span class="time-emoji" aria-hidden="true">🕐</span>
+                                <input type="time" id="ora-task-start" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ora-task-end">End Time <span aria-label="required">*</span></label>
+                            <div class="time-input-group">
+                                <span class="time-emoji" aria-hidden="true">🕐</span>
+                                <input type="time" id="ora-task-end" required>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">＋ Add Task</button>
+                </form>
+            </div>
+
+            <!-- Daily Tasks List -->
+            <div class="ora-tasks-section">
+                <h4>Today's Tasks</h4>
+                <div id="ora-tasks-list" class="ora-tasks-list">
+                    <div class="ora-empty-state">
+                        <p>No tasks added yet. Add your first task above!</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Daily Summary -->
+            <div class="ora-summary-section">
+                <h4>Daily Summary</h4>
+                <div id="ora-summary" class="ora-summary">
+                    <p class="summary-stat">Total Tasks: <strong id="ora-total-tasks">0</strong></p>
+                    <p class="summary-stat">Work Hours: <strong id="ora-work-hours">0h 0m</strong></p>
+                    <button id="ora-send-summary-btn" class="btn btn-secondary" style="width: 100%; margin-top: 10px;">📧 Send Summary to Email</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
