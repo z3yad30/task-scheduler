@@ -1,17 +1,8 @@
-# Nexus Scheduler with Ora
+# Nexus Scheduler
 
 A browser-based task scheduler and dependency pipeline manager for organizing work, tracking progress, and visualizing task order.
 
-**NEW:** ⏰ **Ora** - Daily Task Executor for managing daily tasks with automatic time-based status tracking and notifications.
-
 Live demo: https://z3yad30.github.io/task-scheduler/
-
-## 🚀 Quick Start
-
-1. Open `index.html` in your browser
-2. Register with username, password, and email
-3. Manage pipeline tasks OR use ⏰ Ora for daily tasks
-4. All data saves locally in your browser
 
 ## What this project does
 
@@ -24,7 +15,7 @@ Nexus Scheduler helps you:
 - Switch to a dependency graph view for visual planning
 - Detect circular dependencies and validate task ordering
 - Run sorting tools such as topological sort, priority sort, and deadline sort
-- **⏰ NEW: Use Ora for daily task execution with automatic time-based notifications**
+- Save and manage tasks using a cloud-backed API while keeping the session active in the browser
 
 This project is designed for planning workflows where one task depends on another and you want to see what must happen first.
 
@@ -60,29 +51,21 @@ This project is designed for planning workflows where one task depends on anothe
 - Sort tasks by priority
 - Sort tasks by deadline
 
-### ⏰ Ora - Daily Task Executor (NEW!)
-- Add daily tasks with specific time periods
-- Automatic status updates: Pending → Active → Completed
-- Task notifications (see console logs)
-- Track total work hours
-- Daily task summary
-- Auto-cleanup after 24 hours
-- Email integration ready
-
-**See [ORA_SETUP.md](ORA_SETUP.md) for Ora-specific documentation.**
-
 ## How to use it
 
 ### 1. Open the app
 
-You can run it locally by opening `index.html` in any modern browser.
+You can use the live version here:
+
+https://z3yad30.github.io/task-scheduler/
+
+Or run it locally from your machine.
 
 ### 2. Sign in or register
 
 On first use:
 
 - Enter a username and password
-- **For Ora feature:** Include your email when registering
 - Click Register Account if you do not already have one
 - Sign in with your account afterward
 
@@ -100,15 +83,7 @@ Fill in:
 
 Then submit the form.
 
-### 4. Use Ora (Daily Tasks)
-
-Click the ⏰ **Ora** button to access daily task executor:
-- Add tasks with start/end times
-- Watch status auto-update based on current time
-- Check console for notifications
-- View work hours and task summary
-
-### 5. Manage tasks
+### 4. Manage tasks
 
 From the task list or pipeline view:
 - Open a task to view details
@@ -116,13 +91,13 @@ From the task list or pipeline view:
 - Update its status
 - Delete it when needed
 
-### 6. Toggle views
+### 5. Toggle views
 
 Use the top button to switch between:
 - Pipeline view
 - Graph view
 
-### 7. Analyze your workflow
+### 6. Analyze your workflow
 
 Use the analytics buttons to:
 - Detect cycles
@@ -167,4 +142,4 @@ This is often the easiest way to avoid browser restrictions when working with lo
 
 ## License
 
-This project is provided as a small frontend demo by Zeyad and can be used or modified freely for learning and personal projects.
+This project is provided as a small frontend demo and can be used or modified freely for learning and personal projects.

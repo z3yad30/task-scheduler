@@ -6,7 +6,6 @@
     <title>Nexus Pipeline Engine</title>
     <link rel="stylesheet" href="style.css">
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
     <script>
         (function() {
             const theme = localStorage.getItem('gts_theme') || 'dark';
@@ -45,10 +44,6 @@
                     <label for="auth-password">Password</label>
                     <input type="password" id="auth-password" required placeholder="Enter password" autocomplete="current-password">
                 </div>
-                <div class="form-group" id="email-form-group" style="display:none;">
-                    <label for="auth-email">Email</label>
-                    <input type="email" id="auth-email" placeholder="your@email.com" autocomplete="email">
-                </div>
                 <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">Sign In</button>
             </form>
             <div class="auth-footer">
@@ -75,10 +70,6 @@
                 <button id="nav-toggle-view" class="btn btn-secondary" aria-label="Toggle between pipeline and graph view">
                     <span aria-hidden="true">🕸️</span>
                     <span class="btn-label" id="view-label">Graph</span>
-                </button>
-                <button id="nav-ora" class="btn btn-secondary" aria-label="Open Ora daily task executor" title="Ora - Daily Task Executor">
-                    <span aria-hidden="true">⏰</span>
-                    <span class="btn-label">Ora</span>
                 </button>
                 <button id="nav-task-list" class="btn btn-secondary btn-icon" aria-label="Open task list">
                     <span aria-hidden="true">☰</span>
@@ -324,72 +315,6 @@
                     <button type="submit" class="btn btn-primary">Save Changes</button>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <!-- Ora Daily Task Executor Panel -->
-    <div id="ora-panel" class="slide-panel hidden" role="dialog" aria-modal="true" aria-labelledby="ora-title">
-        <div class="slide-panel-handle" aria-hidden="true"></div>
-        <div class="slide-panel-header">
-            <h3 id="ora-title">⏰ Ora - Daily Task Executor</h3>
-            <button onclick="closePanel('ora-panel')" class="close-btn" aria-label="Close Ora panel">&times;</button>
-        </div>
-        <div class="slide-panel-body">
-            <div class="ora-intro">
-                <p>Track and manage your daily tasks with automatic email reminders at task start, end, and break times.</p>
-            </div>
-
-            <!-- Add Daily Task Form -->
-            <div class="ora-add-task-section">
-                <h4>Add Daily Task</h4>
-                <form id="ora-task-form" autocomplete="off">
-                    <div class="form-group">
-                        <label for="ora-task-name">Task Name <span aria-label="required">*</span></label>
-                        <input type="text" id="ora-task-name" required placeholder="e.g., Design Sprint">
-                    </div>
-                    <div class="form-group">
-                        <label for="ora-task-description">Description <span class="label-hint">Optional</span></label>
-                        <textarea id="ora-task-description" rows="2" placeholder="Add details about this task (optional)"></textarea>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="ora-task-start">Start Time <span aria-label="required">*</span></label>
-                            <div class="time-input-group">
-                                <span class="time-emoji" aria-hidden="true">🕐</span>
-                                <input type="time" id="ora-task-start" required>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="ora-task-end">End Time <span aria-label="required">*</span></label>
-                            <div class="time-input-group">
-                                <span class="time-emoji" aria-hidden="true">🕐</span>
-                                <input type="time" id="ora-task-end" required>
-                            </div>
-                        </div>
-                    </div>
-                    <button type="submit" class="btn btn-primary btn-block">＋ Add Task</button>
-                </form>
-            </div>
-
-            <!-- Daily Tasks List -->
-            <div class="ora-tasks-section">
-                <h4>Today's Tasks</h4>
-                <div id="ora-tasks-list" class="ora-tasks-list">
-                    <div class="ora-empty-state">
-                        <p>No tasks added yet. Add your first task above!</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Daily Summary -->
-            <div class="ora-summary-section">
-                <h4>Daily Summary</h4>
-                <div id="ora-summary" class="ora-summary">
-                    <p class="summary-stat">Total Tasks: <strong id="ora-total-tasks">0</strong></p>
-                    <p class="summary-stat">Work Hours: <strong id="ora-work-hours">0h 0m</strong></p>
-                    <button id="ora-send-summary-btn" class="btn btn-secondary" style="width: 100%; margin-top: 10px;">📧 Send Summary to Email</button>
-                </div>
-            </div>
         </div>
     </div>
 
