@@ -1846,7 +1846,7 @@ async function sendOraDailySummary() {
         .join('\n');
 
     try {
-        await sendOraEmail(`Daily task summary - ${new Date().toLocaleDateString()}`, summary);
+        await sendOraEmail(`Daily task summary - ${new Date()}`, summary);
         showToast('Daily summary email sent.', 'success');
     } catch (error) {
         console.error('Ora summary email error:', error);
