@@ -1378,9 +1378,9 @@ let oraLastNotifiedTime = {};
 // EmailJS configuration. Create a free EmailJS service/template and add its
 // public key here; Gmail SMTP credentials must never be placed in frontend code.
 const ORA_EMAIL_CONFIG = {
-    publicKey: '',
-    serviceId: '',
-    templateId: ''
+    publicKey: 'rnb9cYLlUGl3pyOEn',
+    serviceId: 'service_hi0n02h',
+    templateId: 'template_r13vstb'
 };
 
 function isOraEmailConfigured() {
