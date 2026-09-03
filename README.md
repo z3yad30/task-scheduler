@@ -16,6 +16,7 @@ Nexus Scheduler helps you:
 - Detect circular dependencies and validate task ordering
 - Run sorting tools such as topological sort, priority sort, and deadline sort
 - Save and manage tasks using a cloud-backed API while keeping the session active in the browser
+- Plan daily work blocks in Ora, with start, end, break, and summary notifications
 
 This project is designed for planning workflows where one task depends on another and you want to see what must happen first.
 
@@ -105,6 +106,15 @@ Use the analytics buttons to:
 - Sort by priority
 - Sort by deadline
 - Clear the output console
+
+### Ora daily task executor
+- Open Ora from the clock button beside the pipeline controls
+- Add one task block at a time with a name, optional description, and today’s start and end times
+- Gaps between blocks are treated as breaks and receive a break reminder
+- Ora records expire 24 hours after their scheduled start time
+- Registering an account requires an email address for notifications
+
+Ora’s browser email integration uses EmailJS, because a static page cannot safely connect to Gmail SMTP. Add an EmailJS public key, service ID, and template ID to `ORA_EMAIL_CONFIG` in `app.js`; never put a Gmail password in frontend code. EmailJS must be configured before start, end, break, or summary messages can be delivered.
 
 ## Local development
 

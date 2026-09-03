@@ -1415,17 +1415,21 @@ function loadOraTasks() {
     try {
         const stored = localStorage.getItem(getOraStorageKey());
         oraDailyTasks = stored ? JSON.parse(stored) : [];
-        // Clean up old tasks (older than 24 hours)
-        oraDailyTasks = oraDailyTasks.filter(task => {
-            const taskDate = new Date(task.dateAdded);
-            const now = new Date();
-            const hoursDiff = (now - taskDate) / (1000 * 60 * 60);
-            return hoursDiff < 24;
-        });
+        oraDailyTasks = removeExpiredOraTasks(oraDailyTasks);
         localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
     } catch (e) {
         oraDailyTasks = [];
     }
+}
+
+function getOraTaskStartDate(task) {
+    const start = new Date(`${task.date}T${task.startTime}`);
+    return Number.isNaN(start.getTime()) ? new Date(task.dateAdded) : start;
+}
+
+function removeExpiredOraTasks(tasks) {
+    const expiryTime = Date.now() - (24 * 60 * 60 * 1000);
+    return tasks.filter(task => getOraTaskStartDate(task).getTime() > expiryTime);
 }
 
 function getOraStorageKey() {
@@ -1503,7 +1507,7 @@ async function loadOraTasksFromCloud() {
         });
         await Promise.all(legacyRecords.map(task => fetch(getOraEndpoint(task.id), { method: 'DELETE' })));
 
-        oraDailyTasks = cloudTasks
+        const hydratedTasks = cloudTasks
             .filter(task => task.tasktype === 'ora')
             .map(task => {
                 const date = Array.isArray(task.dailydates) ? task.dailydates[0] || {} : {};
@@ -1520,6 +1524,10 @@ async function loadOraTasksFromCloud() {
                 };
             })
             .filter(task => task.startTime && task.endTime);
+
+        oraDailyTasks = removeExpiredOraTasks(hydratedTasks);
+        const expiredCloudTasks = hydratedTasks.filter(task => !oraDailyTasks.some(activeTask => activeTask.cloudId === task.cloudId));
+        await Promise.all(expiredCloudTasks.map(task => fetch(getOraEndpoint(task.cloudId), { method: 'DELETE' })));
 
         saveOraTasksLocally();
         renderOraTasksList();
@@ -1667,6 +1675,11 @@ function initOraScheduler() {
     if (oraSchedulerInterval) clearInterval(oraSchedulerInterval);
     
     oraSchedulerInterval = setInterval(() => {
+        const activeTasks = removeExpiredOraTasks(oraDailyTasks);
+        if (activeTasks.length !== oraDailyTasks.length) {
+            oraDailyTasks = activeTasks;
+            saveOraTasksLocally();
+        }
         const currentTime = getCurrentTime();
         const currentMinutes = timeToMinutes(currentTime);
         
@@ -1694,7 +1707,11 @@ function initOraScheduler() {
                 if (!oraLastNotifiedTime[notificationKey]) {
                     const nextTask = findNextTask(task);
                     if (nextTask) {
-                        sendOraTaskTransitionNotification(task, nextTask);
+                        if (timeToMinutes(nextTask.startTime) > taskEndMinutes) {
+                            sendOraTaskBreakNotification(task, nextTask);
+                        } else {
+                            sendOraTaskTransitionNotification(task, nextTask);
+                        }
                     } else {
                         sendOraTaskCompletionNotification(task);
                     }
@@ -1776,6 +1793,22 @@ async function sendOraTaskCompletionNotification(task) {
     }
 }
 
+async function sendOraTaskBreakNotification(task, nextTask) {
+    const userEmail = currentUser?.email;
+    if (!userEmail) return;
+
+    try {
+        await sendOraEmail(
+            `Break time after ${task.name}`,
+            `Your task "${task.name}" ended at ${task.endTime}. It is time for a break before "${nextTask.name}" starts at ${nextTask.startTime}.`
+        );
+        showToast('Break reminder email sent.', 'success');
+    } catch (error) {
+        console.error('Ora break email error:', error);
+        showToast(error.message, 'warning');
+    }
+}
+
 /**
  * Send daily summary notification
  */
@@ -1815,6 +1848,8 @@ function initOraListeners() {
     if (oraButton) {
         oraButton.addEventListener('click', () => {
             openPanel('ora-panel');
+            const dateLabel = document.getElementById('ora-date-label');
+            if (dateLabel) dateLabel.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
             loadOraTasks();
             loadOraTasksFromCloud();
             renderOraTasksList();
