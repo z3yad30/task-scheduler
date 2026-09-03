@@ -432,7 +432,8 @@ async function updateTaskStatus(taskName, newStatus) {
                 status: newStatus,
                 links: task.links || [],
                 userId: currentUser.id,
-                user_id: currentUser.id
+                user_id: currentUser.id,
+                tasktype: task.tasktype || 'regular'
             })
         });
 
@@ -532,9 +533,11 @@ async function loadDataFromCloud() {
 
         taskDetails = {};
         cloudTasks.forEach(task => {
-            if (task.name === ORA_RECORD_NAME) return;
+            const normalizedName = String(task.name || '').trim().toLowerCase();
+            if ((task.tasktype || 'regular') !== 'regular' || normalizedName === ORA_RECORD_NAME || normalizedName === 'ora_daily_tasks') return;
             taskDetails[task.name] = {
                 id: task.id,
+                tasktype: task.tasktype || 'regular',
                 dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
                 priority: parseInt(task.priority) || 0,
                 deadline: task.deadline || '',
@@ -580,7 +583,7 @@ async function addTaskHandler() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name, dependencies, priority, deadline, description, links,
-                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started'
+                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started', tasktype: 'regular'
             })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -743,7 +746,8 @@ async function saveTaskEditHandler() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name: newName, dependencies: newDeps, priority, deadline, description, status, links,
-                userId: currentUser.id, user_id: currentUser.id
+                userId: currentUser.id, user_id: currentUser.id,
+                tasktype: taskDetails[oldName].tasktype || 'regular'
             })
         });
         if (!updateRes.ok) throw new Error(`HTTP ${updateRes.status}`);
@@ -764,7 +768,8 @@ async function saveTaskEditHandler() {
                             status: taskDetails[key].status,
                             links: taskDetails[key].links || [],
                             userId: currentUser.id,
-                            user_id: currentUser.id
+                            user_id: currentUser.id,
+                            tasktype: taskDetails[key].tasktype || 'regular'
                         })
                     });
                 }
@@ -1442,6 +1447,7 @@ function getOraRecordPayload() {
         dependencies: [],
         links: [],
         status: 'Not Started',
+        tasktype: 'ora',
         userId: currentUser.id,
         user_id: currentUser.id,
         dailytasks: oraDailyTasks.map(task => task.name),
@@ -1487,7 +1493,10 @@ async function loadOraTasksFromCloud() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const cloudTasks = await response.json();
-        const oraRecord = cloudTasks.find(task => task.name === ORA_RECORD_NAME);
+        const oraRecord = cloudTasks.find(task => {
+            const normalizedName = String(task.name || '').trim().toLowerCase();
+            return task.tasktype === 'ora' || normalizedName === ORA_RECORD_NAME || normalizedName === 'ora_daily_tasks';
+        });
         if (!oraRecord) return;
 
         oraCloudRecordId = oraRecord.id;
@@ -1507,6 +1516,7 @@ async function loadOraTasksFromCloud() {
         })).filter(task => task.startTime && task.endTime);
 
         localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
+        if (oraRecord.tasktype !== 'ora') await saveOraTasks();
         renderOraTasksList();
         updateOraStats();
     } catch (e) {
