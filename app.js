@@ -1394,7 +1394,7 @@ function isOraEmailConfigured() {
 
 async function sendOraEmail(subject, message) {
     const recipient = currentUser?.email;
-    if (!recipient) throw new Error('The signed-in user has no email address.');
+    if (!recipient) throw new Error('No email address is saved for this account. Sign out and register again with your email address.');
     if (!isOraEmailConfigured()) {
         throw new Error('EmailJS is not configured. Add its public key, service ID, and template ID in app.js.');
     }
@@ -1402,6 +1402,8 @@ async function sendOraEmail(subject, message) {
     window.emailjs.init({ publicKey: ORA_EMAIL_CONFIG.publicKey });
     await window.emailjs.send(ORA_EMAIL_CONFIG.serviceId, ORA_EMAIL_CONFIG.templateId, {
         to_email: recipient,
+        email: recipient,
+        to_name: currentUser.username || 'Nexus Scheduler user',
         subject,
         message,
         task_name: subject
@@ -1673,8 +1675,8 @@ function getCurrentTime() {
  */
 function initOraScheduler() {
     if (oraSchedulerInterval) clearInterval(oraSchedulerInterval);
-    
-    oraSchedulerInterval = setInterval(() => {
+
+    const processOraTasks = () => {
         const activeTasks = removeExpiredOraTasks(oraDailyTasks);
         if (activeTasks.length !== oraDailyTasks.length) {
             oraDailyTasks = activeTasks;
@@ -1722,7 +1724,10 @@ function initOraScheduler() {
         });
         
         renderOraTasksList();
-    }, 60000); // Check every minute
+    };
+
+    processOraTasks();
+    oraSchedulerInterval = setInterval(processOraTasks, 15000);
 }
 
 /**
@@ -1741,7 +1746,10 @@ function findNextTask(currentTask) {
  */
 async function sendOraTaskNotification(task, type) {
     const userEmail = currentUser?.email;
-    if (!userEmail) return;
+    if (!userEmail) {
+        showToast('Cannot send task notification: no email address is saved for this account.', 'warning');
+        return;
+    }
 
     try {
         await sendOraEmail(
@@ -1760,7 +1768,10 @@ async function sendOraTaskNotification(task, type) {
  */
 async function sendOraTaskTransitionNotification(completedTask, nextTask) {
     const userEmail = currentUser?.email;
-    if (!userEmail) return;
+    if (!userEmail) {
+        showToast('Cannot send task notification: no email address is saved for this account.', 'warning');
+        return;
+    }
 
     try {
         await sendOraEmail(
@@ -1779,7 +1790,10 @@ async function sendOraTaskTransitionNotification(completedTask, nextTask) {
  */
 async function sendOraTaskCompletionNotification(task) {
     const userEmail = currentUser?.email;
-    if (!userEmail) return;
+    if (!userEmail) {
+        showToast('Cannot send task notification: no email address is saved for this account.', 'warning');
+        return;
+    }
 
     try {
         await sendOraEmail(
@@ -1795,7 +1809,10 @@ async function sendOraTaskCompletionNotification(task) {
 
 async function sendOraTaskBreakNotification(task, nextTask) {
     const userEmail = currentUser?.email;
-    if (!userEmail) return;
+    if (!userEmail) {
+        showToast('Cannot send task notification: no email address is saved for this account.', 'warning');
+        return;
+    }
 
     try {
         await sendOraEmail(
