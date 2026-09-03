@@ -197,9 +197,15 @@ function initAuthListeners() {
         e.preventDefault();
         const username = document.getElementById('auth-username').value.trim();
         const password = document.getElementById('auth-password').value.trim();
+        const email = document.getElementById('auth-email').value.trim();
 
         if (!username || !password) {
-            showToast('Please fill in both fields.', 'error');
+            showToast('Please fill in all required fields.', 'error');
+            return;
+        }
+
+        if (!isLoginMode && !email) {
+            showToast('Email is required for registration.', 'error');
             return;
         }
 
@@ -210,7 +216,7 @@ function initAuthListeners() {
         if (isLoginMode) {
             await handleLogin(username, password);
         } else {
-            await handleRegistration(username, password);
+            await handleRegistration(username, password, email);
         }
 
         btn.disabled = false;
@@ -226,6 +232,14 @@ function updateAuthModeUI() {
     document.getElementById('auth-toggle-text').innerHTML = isLoginMode
         ? `Don't have an account? <a href="#" id="auth-toggle-link">Register here</a>`
         : `Already have an account? <a href="#" id="auth-toggle-link">Sign in</a>`;
+
+    // Show/hide email field based on mode
+    const emailField = document.getElementById('email-form-group');
+    const emailInput = document.getElementById('auth-email');
+    if (emailField) {
+        emailField.style.display = isLoginMode ? 'none' : 'block';
+    }
+    if (emailInput) emailInput.required = !isLoginMode;
 
     document.getElementById('auth-toggle-link').addEventListener('click', (e) => {
         e.preventDefault();
@@ -253,7 +267,7 @@ async function handleLogin(username, password) {
     }
 }
 
-async function handleRegistration(username, password) {
+async function handleRegistration(username, password, email) {
     try {
         const checkRes = await fetch(`${BASE_API_URL}/users`);
         if (!checkRes.ok) throw new Error(`HTTP ${checkRes.status}`);
@@ -272,7 +286,7 @@ async function handleRegistration(username, password) {
         const createRes = await fetch(`${BASE_API_URL}/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, email })
         });
 
         if (!createRes.ok) throw new Error(`HTTP ${createRes.status}`);
@@ -418,7 +432,8 @@ async function updateTaskStatus(taskName, newStatus) {
                 status: newStatus,
                 links: task.links || [],
                 userId: currentUser.id,
-                user_id: currentUser.id
+                user_id: currentUser.id,
+                tasktype: task.tasktype || 'regular'
             })
         });
 
@@ -518,8 +533,11 @@ async function loadDataFromCloud() {
 
         taskDetails = {};
         cloudTasks.forEach(task => {
+            const normalizedName = String(task.name || '').trim().toLowerCase();
+            if ((task.tasktype || 'regular') !== 'regular' || normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__') return;
             taskDetails[task.name] = {
                 id: task.id,
+                tasktype: task.tasktype || 'regular',
                 dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
                 priority: parseInt(task.priority) || 0,
                 deadline: task.deadline || '',
@@ -565,7 +583,7 @@ async function addTaskHandler() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name, dependencies, priority, deadline, description, links,
-                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started'
+                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started', tasktype: 'regular'
             })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -728,7 +746,8 @@ async function saveTaskEditHandler() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name: newName, dependencies: newDeps, priority, deadline, description, status, links,
-                userId: currentUser.id, user_id: currentUser.id
+                userId: currentUser.id, user_id: currentUser.id,
+                tasktype: taskDetails[oldName].tasktype || 'regular'
             })
         });
         if (!updateRes.ok) throw new Error(`HTTP ${updateRes.status}`);
@@ -749,7 +768,8 @@ async function saveTaskEditHandler() {
                             status: taskDetails[key].status,
                             links: taskDetails[key].links || [],
                             userId: currentUser.id,
-                            user_id: currentUser.id
+                            user_id: currentUser.id,
+                            tasktype: taskDetails[key].tasktype || 'regular'
                         })
                     });
                 }
@@ -1348,6 +1368,497 @@ function showOutput(text) {
 
 // ================= BOOTSTRAP =================
 
+// ================= ORA - DAILY TASK EXECUTOR =================
+
+const ORA_KEY = 'ora_daily_tasks';
+let oraDailyTasks = [];
+let oraSchedulerInterval = null;
+let oraLastNotifiedTime = {};
+
+// EmailJS configuration. Create a free EmailJS service/template and add its
+// public key here; Gmail SMTP credentials must never be placed in frontend code.
+const ORA_EMAIL_CONFIG = {
+    publicKey: '',
+    serviceId: '',
+    templateId: ''
+};
+
+function isOraEmailConfigured() {
+    return Boolean(
+        window.emailjs &&
+        ORA_EMAIL_CONFIG.publicKey &&
+        ORA_EMAIL_CONFIG.serviceId &&
+        ORA_EMAIL_CONFIG.templateId
+    );
+}
+
+async function sendOraEmail(subject, message) {
+    const recipient = currentUser?.email;
+    if (!recipient) throw new Error('The signed-in user has no email address.');
+    if (!isOraEmailConfigured()) {
+        throw new Error('EmailJS is not configured. Add its public key, service ID, and template ID in app.js.');
+    }
+
+    window.emailjs.init({ publicKey: ORA_EMAIL_CONFIG.publicKey });
+    await window.emailjs.send(ORA_EMAIL_CONFIG.serviceId, ORA_EMAIL_CONFIG.templateId, {
+        to_email: recipient,
+        subject,
+        message,
+        task_name: subject
+    });
+}
+
+/**
+ * Load Ora daily tasks from localStorage
+ */
+function loadOraTasks() {
+    try {
+        const stored = localStorage.getItem(getOraStorageKey());
+        oraDailyTasks = stored ? JSON.parse(stored) : [];
+        // Clean up old tasks (older than 24 hours)
+        oraDailyTasks = oraDailyTasks.filter(task => {
+            const taskDate = new Date(task.dateAdded);
+            const now = new Date();
+            const hoursDiff = (now - taskDate) / (1000 * 60 * 60);
+            return hoursDiff < 24;
+        });
+        localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
+    } catch (e) {
+        oraDailyTasks = [];
+    }
+}
+
+function getOraStorageKey() {
+    return `${ORA_KEY}_${currentUser?.id || 'guest'}`;
+}
+
+function getOraEndpoint(recordId = '') {
+    return `${BASE_API_URL}/users/${currentUser.id}/tasks${recordId ? `/${recordId}` : ''}`;
+}
+
+function getOraTaskPayload(task) {
+    return {
+        name: task.name,
+        description: task.description || 'none',
+        priority: 0,
+        deadline: '',
+        dependencies: [],
+        links: [],
+        status: 'Not Started',
+        tasktype: 'ora',
+        userId: currentUser.id,
+        user_id: currentUser.id,
+        dailytasks: [task.name],
+        dailydates: [{
+            date: task.date,
+            start: task.startTime,
+            end: task.endTime,
+            dateAdded: task.dateAdded
+        }],
+        dailydesc: [task.description || 'none']
+    };
+}
+
+/**
+ * Save Ora daily tasks to localStorage
+ */
+function saveOraTasksLocally() {
+    localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
+}
+
+async function saveOraTask(task) {
+    try {
+        saveOraTasksLocally();
+
+        if (!currentUser) return;
+
+        const response = await fetch(getOraEndpoint(task.cloudId), {
+            method: task.cloudId ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(getOraTaskPayload(task))
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const savedRecord = await response.json();
+        task.cloudId = savedRecord.id || task.cloudId;
+        task.id = task.cloudId;
+        saveOraTasksLocally();
+    } catch (e) {
+        console.error('Ora database save error:', e);
+        showToast(`Ora task saved locally, but database sync failed: ${e.message}`, 'error');
+    }
+}
+
+async function loadOraTasksFromCloud() {
+    if (!currentUser) return;
+
+    try {
+        const response = await fetch(getOraEndpoint());
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const cloudTasks = await response.json();
+        const legacyRecords = cloudTasks.filter(task => {
+            const normalizedName = String(task.name || '').trim().toLowerCase();
+            return normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__';
+        });
+        await Promise.all(legacyRecords.map(task => fetch(getOraEndpoint(task.id), { method: 'DELETE' })));
+
+        oraDailyTasks = cloudTasks
+            .filter(task => task.tasktype === 'ora')
+            .map(task => {
+                const date = Array.isArray(task.dailydates) ? task.dailydates[0] || {} : {};
+                return {
+                    id: task.id,
+                    cloudId: task.id,
+                    name: task.name,
+                    description: task.description || task.dailydesc?.[0] || 'none',
+                    date: date.date || new Date().toISOString().slice(0, 10),
+                    startTime: date.start || '',
+                    endTime: date.end || '',
+                    dateAdded: date.dateAdded || task.createdAt || new Date().toISOString(),
+                    status: 'pending'
+                };
+            })
+            .filter(task => task.startTime && task.endTime);
+
+        saveOraTasksLocally();
+        renderOraTasksList();
+        updateOraStats();
+    } catch (e) {
+        console.error('Ora database load error:', e);
+        showToast('Could not load daily tasks from the database.', 'error');
+    }
+}
+
+/**
+ * Add a new daily task
+ */
+async function addOraTask(taskName, taskDescription, startTime, endTime) {
+    const newTask = {
+        id: Date.now().toString(),
+        name: taskName,
+        description: taskDescription || 'none',
+        date: new Date().toISOString().slice(0, 10),
+        startTime: startTime,
+        endTime: endTime,
+        dateAdded: new Date().toISOString(),
+        status: 'pending'
+    };
+    
+    oraDailyTasks.push(newTask);
+    oraDailyTasks.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    await saveOraTask(newTask);
+    renderOraTasksList();
+    updateOraStats();
+    showToast(`Task "${taskName}" added to Ora!`, 'success');
+}
+
+/**
+ * Delete a daily task
+ */
+async function deleteOraTask(taskId) {
+    const task = oraDailyTasks.find(item => item.id === taskId);
+    oraDailyTasks = oraDailyTasks.filter(item => item.id !== taskId);
+    saveOraTasksLocally();
+    if (task?.cloudId && currentUser) {
+        try {
+            const response = await fetch(getOraEndpoint(task.cloudId), { method: 'DELETE' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (error) {
+            console.error('Ora database delete error:', error);
+            showToast('Task removed locally, but database deletion failed.', 'error');
+        }
+    }
+    renderOraTasksList();
+    updateOraStats();
+    showToast('Task deleted', 'info');
+}
+
+/**
+ * Render the list of daily tasks
+ */
+function renderOraTasksList() {
+    const container = document.getElementById('ora-tasks-list');
+    if (!container) return;
+
+    if (oraDailyTasks.length === 0) {
+        container.innerHTML = '<div class="ora-empty-state"><p>No tasks added yet. Add your first task above!</p></div>';
+        return;
+    }
+
+    container.innerHTML = oraDailyTasks.map(task => {
+        const statusBadgeClass = task.status === 'active' 
+            ? 'ora-task-status-active' 
+            : task.status === 'completed' 
+            ? 'ora-task-status-completed' 
+            : 'ora-task-status-pending';
+        
+        const statusLabel = task.status.charAt(0).toUpperCase() + task.status.slice(1);
+        
+        return `
+            <div class="ora-task-item" data-task-id="${task.id}">
+                <div class="ora-task-content">
+                    <p class="ora-task-name">${escapeHtml(task.name)}</p>
+                    <div class="ora-task-time">
+                        <span aria-hidden="true">🕐</span>
+                        <span>${task.startTime}</span>
+                        <span>→</span>
+                        <span>${task.endTime}</span>
+                    </div>
+                    ${task.description !== 'none' ? `<p class="ora-task-description">${escapeHtml(task.description)}</p>` : ''}
+                </div>
+                <div class="ora-task-actions">
+                    <span class="ora-task-status-badge ${statusBadgeClass}">${statusLabel}</span>
+                    <button class="btn btn-danger delete-task-btn" onclick="deleteOraTask('${task.id}')" aria-label="Delete task">Delete</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Update Ora statistics (total tasks, work hours)
+ */
+function updateOraStats() {
+    const totalTasksEl = document.getElementById('ora-total-tasks');
+    const workHoursEl = document.getElementById('ora-work-hours');
+    
+    if (totalTasksEl) totalTasksEl.textContent = oraDailyTasks.length;
+    
+    if (workHoursEl) {
+        let totalMinutes = 0;
+        oraDailyTasks.forEach(task => {
+            const [startH, startM] = task.startTime.split(':').map(Number);
+            const [endH, endM] = task.endTime.split(':').map(Number);
+            const startMinutes = startH * 60 + startM;
+            const endMinutes = endH * 60 + endM;
+            const taskMinutes = endMinutes - startMinutes;
+            totalMinutes += taskMinutes > 0 ? taskMinutes : 0;
+        });
+        
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        workHoursEl.textContent = `${hours}h ${minutes}m`;
+    }
+}
+
+/**
+ * Convert time string (HH:MM) to minutes since midnight
+ */
+function timeToMinutes(timeStr) {
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+}
+
+/**
+ * Get current time in HH:MM format
+ */
+function getCurrentTime() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+}
+
+/**
+ * Initialize Ora task scheduler
+ */
+function initOraScheduler() {
+    if (oraSchedulerInterval) clearInterval(oraSchedulerInterval);
+    
+    oraSchedulerInterval = setInterval(() => {
+        const currentTime = getCurrentTime();
+        const currentMinutes = timeToMinutes(currentTime);
+        
+        oraDailyTasks.forEach(task => {
+            const taskStartMinutes = timeToMinutes(task.startTime);
+            const taskEndMinutes = timeToMinutes(task.endTime);
+            
+            // Check if task should be marked as active
+            if (currentMinutes >= taskStartMinutes && currentMinutes < taskEndMinutes && task.status === 'pending') {
+                task.status = 'active';
+                const notificationKey = `${task.id}_start`;
+                
+                if (!oraLastNotifiedTime[notificationKey]) {
+                    sendOraTaskNotification(task, 'start');
+                    oraLastNotifiedTime[notificationKey] = true;
+                }
+                saveOraTasksLocally();
+            }
+            
+            // Check if task should be marked as completed
+            if (currentMinutes >= taskEndMinutes && task.status !== 'completed') {
+                task.status = 'completed';
+                const notificationKey = `${task.id}_end`;
+                
+                if (!oraLastNotifiedTime[notificationKey]) {
+                    const nextTask = findNextTask(task);
+                    if (nextTask) {
+                        sendOraTaskTransitionNotification(task, nextTask);
+                    } else {
+                        sendOraTaskCompletionNotification(task);
+                    }
+                    oraLastNotifiedTime[notificationKey] = true;
+                }
+                saveOraTasksLocally();
+            }
+        });
+        
+        renderOraTasksList();
+    }, 60000); // Check every minute
+}
+
+/**
+ * Find the next task after the given task
+ */
+function findNextTask(currentTask) {
+    const taskEnd = timeToMinutes(currentTask.endTime);
+    const nextTasks = oraDailyTasks.filter(t => 
+        timeToMinutes(t.startTime) >= taskEnd && t.id !== currentTask.id && t.status === 'pending'
+    );
+    return nextTasks.length > 0 ? nextTasks[0] : null;
+}
+
+/**
+ * Send task start notification
+ */
+async function sendOraTaskNotification(task, type) {
+    const userEmail = currentUser?.email;
+    if (!userEmail) return;
+
+    try {
+        await sendOraEmail(
+            `Task started: ${task.name}`,
+            `Your task "${task.name}" started at ${task.startTime}.`
+        );
+        showToast(`Email sent for ${task.name}`, 'success');
+    } catch (error) {
+        console.error('Ora start email error:', error);
+        showToast(error.message, 'warning');
+    }
+}
+
+/**
+ * Send task transition notification (task end + next task start)
+ */
+async function sendOraTaskTransitionNotification(completedTask, nextTask) {
+    const userEmail = currentUser?.email;
+    if (!userEmail) return;
+
+    try {
+        await sendOraEmail(
+            `Task completed: ${completedTask.name}`,
+            `"${completedTask.name}" ended. Your next task, "${nextTask.name}", starts at ${nextTask.startTime}.`
+        );
+        showToast(`Email sent for ${nextTask.name}`, 'success');
+    } catch (error) {
+        console.error('Ora transition email error:', error);
+        showToast(error.message, 'warning');
+    }
+}
+
+/**
+ * Send task completion notification
+ */
+async function sendOraTaskCompletionNotification(task) {
+    const userEmail = currentUser?.email;
+    if (!userEmail) return;
+
+    try {
+        await sendOraEmail(
+            `Task completed: ${task.name}`,
+            `Your task "${task.name}" ended at ${task.endTime}.`
+        );
+        showToast(`Completion email sent for ${task.name}`, 'success');
+    } catch (error) {
+        console.error('Ora completion email error:', error);
+        showToast(error.message, 'warning');
+    }
+}
+
+/**
+ * Send daily summary notification
+ */
+async function sendOraDailySummary() {
+    const userEmail = currentUser?.email;
+    if (!userEmail) {
+        showToast('User email not found', 'warning');
+        return;
+    }
+    
+    if (oraDailyTasks.length === 0) {
+        showToast('No tasks to summarize', 'warning');
+        return;
+    }
+    
+    const summary = oraDailyTasks
+        .map(task => `${task.name}: ${task.startTime} - ${task.endTime}${task.description !== 'none' ? ` (${task.description})` : ''}`)
+        .join('\n');
+
+    try {
+        await sendOraEmail(`Daily task summary - ${new Date().toLocaleDateString()}`, summary);
+        showToast('Daily summary email sent.', 'success');
+    } catch (error) {
+        console.error('Ora summary email error:', error);
+        showToast(error.message, 'warning');
+    }
+}
+
+/**
+ * Initialize Ora event listeners
+ */
+function initOraListeners() {
+    const oraButton = document.getElementById('nav-ora');
+    const oraForm = document.getElementById('ora-task-form');
+    const oraSummaryBtn = document.getElementById('ora-send-summary-btn');
+    
+    if (oraButton) {
+        oraButton.addEventListener('click', () => {
+            openPanel('ora-panel');
+            loadOraTasks();
+            loadOraTasksFromCloud();
+            renderOraTasksList();
+            updateOraStats();
+        });
+    }
+    
+    if (oraForm) {
+        oraForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const taskName = document.getElementById('ora-task-name').value.trim();
+            const taskDescription = document.getElementById('ora-task-description').value.trim();
+            const startTime = document.getElementById('ora-task-start').value;
+            const endTime = document.getElementById('ora-task-end').value;
+            
+            if (!taskName || !startTime || !endTime) {
+                showToast('Please fill in all required fields', 'warning');
+                return;
+            }
+            
+            if (startTime >= endTime) {
+                showToast('End time must be after start time', 'warning');
+                return;
+            }
+            
+            await addOraTask(taskName, taskDescription, startTime, endTime);
+            oraForm.reset();
+        });
+    }
+    
+    if (oraSummaryBtn) {
+        oraSummaryBtn.addEventListener('click', sendOraDailySummary);
+    }
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
 
@@ -1374,4 +1885,12 @@ document.addEventListener('DOMContentLoaded', () => {
     window.sortByPriority = sortByPriority;
     window.sortByDeadline = sortByDeadline;
     window.clearOutput = clearOutput;
+    window.deleteOraTask = deleteOraTask;
+    window.sendOraDailySummary = sendOraDailySummary;
+    
+    // Initialize Ora
+    loadOraTasks();
+    if (currentUser) loadOraTasksFromCloud();
+    initOraListeners();
+    initOraScheduler();
 });
