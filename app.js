@@ -534,7 +534,7 @@ async function loadDataFromCloud() {
         taskDetails = {};
         cloudTasks.forEach(task => {
             const normalizedName = String(task.name || '').trim().toLowerCase();
-            if ((task.tasktype || 'regular') !== 'regular' || normalizedName === ORA_RECORD_NAME || normalizedName === 'ora_daily_tasks') return;
+            if ((task.tasktype || 'regular') !== 'regular' || normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__') return;
             taskDetails[task.name] = {
                 id: task.id,
                 tasktype: task.tasktype || 'regular',
@@ -1371,11 +1371,9 @@ function showOutput(text) {
 // ================= ORA - DAILY TASK EXECUTOR =================
 
 const ORA_KEY = 'ora_daily_tasks';
-const ORA_RECORD_NAME = '__ora_daily_tasks__';
 let oraDailyTasks = [];
 let oraSchedulerInterval = null;
 let oraLastNotifiedTime = {};
-let oraCloudRecordId = null;
 
 // EmailJS configuration. Create a free EmailJS service/template and add its
 // public key here; Gmail SMTP credentials must never be placed in frontend code.
@@ -1438,10 +1436,10 @@ function getOraEndpoint(recordId = '') {
     return `${BASE_API_URL}/users/${currentUser.id}/tasks${recordId ? `/${recordId}` : ''}`;
 }
 
-function getOraRecordPayload() {
+function getOraTaskPayload(task) {
     return {
-        name: ORA_RECORD_NAME,
-        description: 'Ora daily task data',
+        name: task.name,
+        description: task.description || 'none',
         priority: 0,
         deadline: '',
         dependencies: [],
@@ -1450,38 +1448,44 @@ function getOraRecordPayload() {
         tasktype: 'ora',
         userId: currentUser.id,
         user_id: currentUser.id,
-        dailytasks: oraDailyTasks.map(task => task.name),
-        dailydates: oraDailyTasks.map(task => ({
+        dailytasks: [task.name],
+        dailydates: [{
             date: task.date,
             start: task.startTime,
             end: task.endTime,
             dateAdded: task.dateAdded
-        })),
-        dailydesc: oraDailyTasks.map(task => task.description || 'none')
+        }],
+        dailydesc: [task.description || 'none']
     };
 }
 
 /**
  * Save Ora daily tasks to localStorage
  */
-async function saveOraTasks() {
+function saveOraTasksLocally() {
+    localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
+}
+
+async function saveOraTask(task) {
     try {
-        localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
+        saveOraTasksLocally();
 
         if (!currentUser) return;
 
-        const response = await fetch(getOraEndpoint(oraCloudRecordId), {
-            method: oraCloudRecordId ? 'PUT' : 'POST',
+        const response = await fetch(getOraEndpoint(task.cloudId), {
+            method: task.cloudId ? 'PUT' : 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(getOraRecordPayload())
+            body: JSON.stringify(getOraTaskPayload(task))
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const savedRecord = await response.json();
-        oraCloudRecordId = savedRecord.id || oraCloudRecordId;
+        task.cloudId = savedRecord.id || task.cloudId;
+        task.id = task.cloudId;
+        saveOraTasksLocally();
     } catch (e) {
         console.error('Ora database save error:', e);
-        showToast('Daily task saved locally, but database sync failed.', 'error');
+        showToast(`Ora task saved locally, but database sync failed: ${e.message}`, 'error');
     }
 }
 
@@ -1493,30 +1497,31 @@ async function loadOraTasksFromCloud() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const cloudTasks = await response.json();
-        const oraRecord = cloudTasks.find(task => {
+        const legacyRecords = cloudTasks.filter(task => {
             const normalizedName = String(task.name || '').trim().toLowerCase();
-            return task.tasktype === 'ora' || normalizedName === ORA_RECORD_NAME || normalizedName === 'ora_daily_tasks';
+            return normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__';
         });
-        if (!oraRecord) return;
+        await Promise.all(legacyRecords.map(task => fetch(getOraEndpoint(task.id), { method: 'DELETE' })));
 
-        oraCloudRecordId = oraRecord.id;
-        const names = Array.isArray(oraRecord.dailytasks) ? oraRecord.dailytasks : [];
-        const dates = Array.isArray(oraRecord.dailydates) ? oraRecord.dailydates : [];
-        const descriptions = Array.isArray(oraRecord.dailydesc) ? oraRecord.dailydesc : [];
+        oraDailyTasks = cloudTasks
+            .filter(task => task.tasktype === 'ora')
+            .map(task => {
+                const date = Array.isArray(task.dailydates) ? task.dailydates[0] || {} : {};
+                return {
+                    id: task.id,
+                    cloudId: task.id,
+                    name: task.name,
+                    description: task.description || task.dailydesc?.[0] || 'none',
+                    date: date.date || new Date().toISOString().slice(0, 10),
+                    startTime: date.start || '',
+                    endTime: date.end || '',
+                    dateAdded: date.dateAdded || task.createdAt || new Date().toISOString(),
+                    status: 'pending'
+                };
+            })
+            .filter(task => task.startTime && task.endTime);
 
-        oraDailyTasks = names.map((name, index) => ({
-            id: `${oraRecord.id}-${index}`,
-            name,
-            description: descriptions[index] || 'none',
-            date: dates[index]?.date || new Date().toISOString().slice(0, 10),
-            startTime: dates[index]?.start || '',
-            endTime: dates[index]?.end || '',
-            dateAdded: dates[index]?.dateAdded || new Date().toISOString(),
-            status: 'pending'
-        })).filter(task => task.startTime && task.endTime);
-
-        localStorage.setItem(getOraStorageKey(), JSON.stringify(oraDailyTasks));
-        if (oraRecord.tasktype !== 'ora') await saveOraTasks();
+        saveOraTasksLocally();
         renderOraTasksList();
         updateOraStats();
     } catch (e) {
@@ -1542,7 +1547,7 @@ async function addOraTask(taskName, taskDescription, startTime, endTime) {
     
     oraDailyTasks.push(newTask);
     oraDailyTasks.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    await saveOraTasks();
+    await saveOraTask(newTask);
     renderOraTasksList();
     updateOraStats();
     showToast(`Task "${taskName}" added to Ora!`, 'success');
@@ -1551,9 +1556,19 @@ async function addOraTask(taskName, taskDescription, startTime, endTime) {
 /**
  * Delete a daily task
  */
-function deleteOraTask(taskId) {
-    oraDailyTasks = oraDailyTasks.filter(task => task.id !== taskId);
-    saveOraTasks();
+async function deleteOraTask(taskId) {
+    const task = oraDailyTasks.find(item => item.id === taskId);
+    oraDailyTasks = oraDailyTasks.filter(item => item.id !== taskId);
+    saveOraTasksLocally();
+    if (task?.cloudId && currentUser) {
+        try {
+            const response = await fetch(getOraEndpoint(task.cloudId), { method: 'DELETE' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (error) {
+            console.error('Ora database delete error:', error);
+            showToast('Task removed locally, but database deletion failed.', 'error');
+        }
+    }
     renderOraTasksList();
     updateOraStats();
     showToast('Task deleted', 'info');
@@ -1668,7 +1683,7 @@ function initOraScheduler() {
                     sendOraTaskNotification(task, 'start');
                     oraLastNotifiedTime[notificationKey] = true;
                 }
-                saveOraTasks();
+                saveOraTasksLocally();
             }
             
             // Check if task should be marked as completed
@@ -1685,7 +1700,7 @@ function initOraScheduler() {
                     }
                     oraLastNotifiedTime[notificationKey] = true;
                 }
-                saveOraTasks();
+                saveOraTasksLocally();
             }
         });
         
