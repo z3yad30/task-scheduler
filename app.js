@@ -34,6 +34,15 @@ const STATUS_PREFIX = {
     'End': '[✓]'
 };
 
+function getTaskType(tasktype) {
+    if (tasktype && typeof tasktype === 'object') return tasktype.type || 'regular';
+    return tasktype || 'regular';
+}
+
+function getRegularTaskType() {
+    return { type: 'regular' };
+}
+
 // ================= THEME =================
 
 function initTheme() {
@@ -433,7 +442,7 @@ async function updateTaskStatus(taskName, newStatus) {
                 links: task.links || [],
                 userId: currentUser.id,
                 user_id: currentUser.id,
-                tasktype: task.tasktype || 'regular'
+                tasktype: getRegularTaskType()
             })
         });
 
@@ -533,11 +542,10 @@ async function loadDataFromCloud() {
 
         taskDetails = {};
         cloudTasks.forEach(task => {
-            const normalizedName = String(task.name || '').trim().toLowerCase();
-            if ((task.tasktype || 'regular') !== 'regular' || normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__') return;
+            if (getTaskType(task.tasktype) !== 'regular') return;
             taskDetails[task.name] = {
                 id: task.id,
-                tasktype: task.tasktype || 'regular',
+                tasktype: getRegularTaskType(),
                 dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
                 priority: parseInt(task.priority) || 0,
                 deadline: task.deadline || '',
@@ -583,7 +591,7 @@ async function addTaskHandler() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 name, dependencies, priority, deadline, description, links,
-                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started', tasktype: 'regular'
+                userId: currentUser.id, user_id: currentUser.id, status: 'Not Started', tasktype: getRegularTaskType()
             })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -645,7 +653,8 @@ async function deleteTask(taskName) {
                     status: succData.status || 'Not Started',
                     links: succData.links || [],
                     userId: currentUser.id,
-                    user_id: currentUser.id
+                    user_id: currentUser.id,
+                    tasktype: getRegularTaskType()
                 })
             });
             if (!res.ok) throw new Error(`Failed to update "${succName}": HTTP ${res.status}`);
@@ -747,7 +756,7 @@ async function saveTaskEditHandler() {
             body: JSON.stringify({
                 name: newName, dependencies: newDeps, priority, deadline, description, status, links,
                 userId: currentUser.id, user_id: currentUser.id,
-                tasktype: taskDetails[oldName].tasktype || 'regular'
+                tasktype: getRegularTaskType()
             })
         });
         if (!updateRes.ok) throw new Error(`HTTP ${updateRes.status}`);
@@ -769,7 +778,7 @@ async function saveTaskEditHandler() {
                             links: taskDetails[key].links || [],
                             userId: currentUser.id,
                             user_id: currentUser.id,
-                            tasktype: taskDetails[key].tasktype || 'regular'
+                            tasktype: getRegularTaskType()
                         })
                     });
                 }
@@ -1373,7 +1382,6 @@ function showOutput(text) {
 const ORA_KEY = 'ora_daily_tasks';
 let oraDailyTasks = [];
 let oraSchedulerInterval = null;
-let oraLastNotifiedTime = {};
 
 // EmailJS configuration. Create a free EmailJS service/template and add its
 // public key here; Gmail SMTP credentials must never be placed in frontend code.
@@ -1442,27 +1450,45 @@ function getOraEndpoint(recordId = '') {
     return `${BASE_API_URL}/users/${currentUser.id}/tasks${recordId ? `/${recordId}` : ''}`;
 }
 
+function createOraEmailState(email = {}) {
+    return ['start', 'end', 'break', 'summary'].reduce((state, event) => {
+        state[event] = {
+            sent: Boolean(email[event]?.sent),
+            sentAt: email[event]?.sentAt || null
+        };
+        return state;
+    }, {});
+}
+
+function getOraTypeData(task) {
+    const typeData = task.tasktype && typeof task.tasktype === 'object' ? task.tasktype : {};
+    const legacyDate = Array.isArray(task.dailydates) ? task.dailydates[0] || {} : {};
+    return {
+        type: 'ora',
+        date: typeData.date || legacyDate.date || task.date,
+        start: typeData.start || legacyDate.start || task.startTime,
+        end: typeData.end || legacyDate.end || task.endTime,
+        dateAdded: typeData.dateAdded || legacyDate.dateAdded || task.dateAdded,
+        email: createOraEmailState(typeData.email)
+    };
+}
+
 function getOraTaskPayload(task) {
+    const typeData = getOraTypeData(task);
     return {
         name: task.name,
-        description: task.description || 'none',
-        priority: 0,
-        deadline: '',
-        dependencies: [],
-        links: [],
-        status: 'Not Started',
-        tasktype: 'ora',
+        description: task.description || '',
+        status: task.status || 'pending',
+        tasktype: typeData,
         userId: currentUser.id,
-        user_id: currentUser.id,
-        dailytasks: [task.name],
-        dailydates: [{
-            date: task.date,
-            start: task.startTime,
-            end: task.endTime,
-            dateAdded: task.dateAdded
-        }],
-        dailydesc: [task.description || 'none']
+        user_id: currentUser.id
     };
+}
+
+async function markOraEmailSent(task, event) {
+    task.email = createOraEmailState(task.email);
+    task.email[event] = { sent: true, sentAt: new Date().toISOString() };
+    await saveOraTask(task);
 }
 
 /**
@@ -1503,29 +1529,35 @@ async function loadOraTasksFromCloud() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const cloudTasks = await response.json();
-        const legacyRecords = cloudTasks.filter(task => {
-            const normalizedName = String(task.name || '').trim().toLowerCase();
-            return normalizedName === 'ora_daily_tasks' || normalizedName === '__ora_daily_tasks__';
-        });
-        await Promise.all(legacyRecords.map(task => fetch(getOraEndpoint(task.id), { method: 'DELETE' })));
-
         const hydratedTasks = cloudTasks
-            .filter(task => task.tasktype === 'ora')
+            .filter(task => getTaskType(task.tasktype) === 'ora')
             .map(task => {
-                const date = Array.isArray(task.dailydates) ? task.dailydates[0] || {} : {};
+                const typeData = getOraTypeData(task);
                 return {
                     id: task.id,
                     cloudId: task.id,
                     name: task.name,
-                    description: task.description || task.dailydesc?.[0] || 'none',
-                    date: date.date || new Date().toISOString().slice(0, 10),
-                    startTime: date.start || '',
-                    endTime: date.end || '',
-                    dateAdded: date.dateAdded || task.createdAt || new Date().toISOString(),
-                    status: 'pending'
+                    description: task.description || '',
+                    date: typeData.date || new Date().toISOString().slice(0, 10),
+                    startTime: typeData.start || '',
+                    endTime: typeData.end || '',
+                    dateAdded: typeData.dateAdded || task.createdAt || new Date().toISOString(),
+                    status: task.status || 'pending',
+                    email: typeData.email,
+                    needsMigration: typeof task.tasktype !== 'object' ||
+                        Object.prototype.hasOwnProperty.call(task, 'dailytasks') ||
+                        Object.prototype.hasOwnProperty.call(task, 'dailydates') ||
+                        Object.prototype.hasOwnProperty.call(task, 'dailydesc')
                 };
             })
             .filter(task => task.startTime && task.endTime);
+
+        await Promise.all(hydratedTasks
+            .filter(task => task.needsMigration)
+            .map(async task => {
+                await saveOraTask(task);
+                delete task.needsMigration;
+            }));
 
         oraDailyTasks = removeExpiredOraTasks(hydratedTasks);
         const expiredCloudTasks = hydratedTasks.filter(task => !oraDailyTasks.some(activeTask => activeTask.cloudId === task.cloudId));
@@ -1552,7 +1584,8 @@ async function addOraTask(taskName, taskDescription, startTime, endTime) {
         startTime: startTime,
         endTime: endTime,
         dateAdded: new Date().toISOString(),
-        status: 'pending'
+        status: 'pending',
+        email: createOraEmailState()
     };
     
     oraDailyTasks.push(newTask);
@@ -1692,11 +1725,8 @@ function initOraScheduler() {
             // Check if task should be marked as active
             if (currentMinutes >= taskStartMinutes && currentMinutes < taskEndMinutes && task.status === 'pending') {
                 task.status = 'active';
-                const notificationKey = `${task.id}_start`;
-                
-                if (!oraLastNotifiedTime[notificationKey]) {
+                if (!task.email?.start?.sent) {
                     sendOraTaskNotification(task, 'start');
-                    oraLastNotifiedTime[notificationKey] = true;
                 }
                 saveOraTasksLocally();
             }
@@ -1704,9 +1734,7 @@ function initOraScheduler() {
             // Check if task should be marked as completed
             if (currentMinutes >= taskEndMinutes && task.status !== 'completed') {
                 task.status = 'completed';
-                const notificationKey = `${task.id}_end`;
-                
-                if (!oraLastNotifiedTime[notificationKey]) {
+                if (!task.email?.end?.sent) {
                     const nextTask = findNextTask(task);
                     if (nextTask) {
                         if (timeToMinutes(nextTask.startTime) > taskEndMinutes) {
@@ -1717,7 +1745,6 @@ function initOraScheduler() {
                     } else {
                         sendOraTaskCompletionNotification(task);
                     }
-                    oraLastNotifiedTime[notificationKey] = true;
                 }
                 saveOraTasksLocally();
             }
@@ -1756,6 +1783,7 @@ async function sendOraTaskNotification(task, type) {
             `Task started: ${task.name}`,
             `Your task "${task.name}" started at ${task.startTime}.`
         );
+        await markOraEmailSent(task, 'start');
         showToast(`Email sent for ${task.name}`, 'success');
     } catch (error) {
         console.error('Ora start email error:', error);
@@ -1778,6 +1806,7 @@ async function sendOraTaskTransitionNotification(completedTask, nextTask) {
             `Task completed: ${completedTask.name}`,
             `"${completedTask.name}" ended. Your next task, "${nextTask.name}", starts at ${nextTask.startTime}.`
         );
+        await markOraEmailSent(completedTask, 'end');
         showToast(`Email sent for ${nextTask.name}`, 'success');
     } catch (error) {
         console.error('Ora transition email error:', error);
@@ -1800,6 +1829,7 @@ async function sendOraTaskCompletionNotification(task) {
             `Task completed: ${task.name}`,
             `Your task "${task.name}" ended at ${task.endTime}.`
         );
+        await markOraEmailSent(task, 'end');
         showToast(`Completion email sent for ${task.name}`, 'success');
     } catch (error) {
         console.error('Ora completion email error:', error);
@@ -1819,6 +1849,7 @@ async function sendOraTaskBreakNotification(task, nextTask) {
             `Break time after ${task.name}`,
             `Your task "${task.name}" ended at ${task.endTime}. It is time for a break before "${nextTask.name}" starts at ${nextTask.startTime}.`
         );
+        await markOraEmailSent(task, 'break');
         showToast('Break reminder email sent.', 'success');
     } catch (error) {
         console.error('Ora break email error:', error);
@@ -1847,6 +1878,7 @@ async function sendOraDailySummary() {
 
     try {
         await sendOraEmail(`Daily task summary - ${new Date()}`, summary);
+        await Promise.all(oraDailyTasks.map(task => markOraEmailSent(task, 'summary')));
         showToast('Daily summary email sent.', 'success');
     } catch (error) {
         console.error('Ora summary email error:', error);
