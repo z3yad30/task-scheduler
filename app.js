@@ -1469,7 +1469,7 @@ function getOraTypeData(task) {
         start: typeData.start || legacyDate.start || task.startTime,
         end: typeData.end || legacyDate.end || task.endTime,
         dateAdded: typeData.dateAdded || legacyDate.dateAdded || task.dateAdded,
-        email: createOraEmailState(typeData.email)
+        email: createOraEmailState(task.email || typeData.email)
     };
 }
 
@@ -1486,9 +1486,16 @@ function getOraTaskPayload(task) {
 }
 
 async function markOraEmailSent(task, event) {
-    task.email = createOraEmailState(task.email);
+    const previousEmail = createOraEmailState(getOraTypeData(task).email);
+    task.email = createOraEmailState(previousEmail);
     task.email[event] = { sent: true, sentAt: new Date().toISOString() };
-    await saveOraTask(task);
+
+    const saved = await saveOraTask(task);
+    if (!saved) {
+        task.email = previousEmail;
+        saveOraTasksLocally();
+    }
+    return saved;
 }
 
 /**
@@ -1502,7 +1509,7 @@ async function saveOraTask(task) {
     try {
         saveOraTasksLocally();
 
-        if (!currentUser) return;
+        if (!currentUser) return false;
 
         const response = await fetch(getOraEndpoint(task.cloudId), {
             method: task.cloudId ? 'PUT' : 'POST',
@@ -1515,10 +1522,27 @@ async function saveOraTask(task) {
         task.cloudId = savedRecord.id || task.cloudId;
         task.id = task.cloudId;
         saveOraTasksLocally();
+        return true;
     } catch (e) {
         console.error('Ora database save error:', e);
         showToast(`Ora task saved locally, but database sync failed: ${e.message}`, 'error');
+        return false;
     }
+}
+
+async function refreshOraTaskFromCloud(task) {
+    if (!currentUser || !task.cloudId) return task;
+
+    const response = await fetch(getOraEndpoint(task.cloudId));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const serverTask = await response.json();
+    const typeData = getOraTypeData(serverTask);
+    task.tasktype = typeData;
+    task.email = typeData.email;
+    task.status = serverTask.status || task.status;
+    saveOraTasksLocally();
+    return task;
 }
 
 async function loadOraTasksFromCloud() {
@@ -1709,7 +1733,7 @@ function getCurrentTime() {
 function initOraScheduler() {
     if (oraSchedulerInterval) clearInterval(oraSchedulerInterval);
 
-    const processOraTasks = () => {
+    const processOraTasks = async () => {
         const activeTasks = removeExpiredOraTasks(oraDailyTasks);
         if (activeTasks.length !== oraDailyTasks.length) {
             oraDailyTasks = activeTasks;
@@ -1718,37 +1742,41 @@ function initOraScheduler() {
         const currentTime = getCurrentTime();
         const currentMinutes = timeToMinutes(currentTime);
         
-        oraDailyTasks.forEach(task => {
+        for (const task of oraDailyTasks) {
             const taskStartMinutes = timeToMinutes(task.startTime);
             const taskEndMinutes = timeToMinutes(task.endTime);
             
             // Check if task should be marked as active
-            if (currentMinutes >= taskStartMinutes && currentMinutes < taskEndMinutes && task.status === 'pending') {
-                task.status = 'active';
+            if (currentMinutes >= taskStartMinutes && currentMinutes < taskEndMinutes) {
+                if (task.status === 'pending') {
+                    task.status = 'active';
+                    await saveOraTask(task);
+                }
                 if (!task.email?.start?.sent) {
-                    sendOraTaskNotification(task, 'start');
+                    await sendOraTaskNotification(task, 'start');
                 }
                 saveOraTasksLocally();
             }
             
             // Check if task should be marked as completed
-            if (currentMinutes >= taskEndMinutes && task.status !== 'completed') {
-                task.status = 'completed';
-                if (!task.email?.end?.sent) {
-                    const nextTask = findNextTask(task);
-                    if (nextTask) {
-                        if (timeToMinutes(nextTask.startTime) > taskEndMinutes) {
-                            sendOraTaskBreakNotification(task, nextTask);
-                        } else {
-                            sendOraTaskTransitionNotification(task, nextTask);
-                        }
-                    } else {
-                        sendOraTaskCompletionNotification(task);
-                    }
+            if (currentMinutes >= taskEndMinutes) {
+                const statusChanged = task.status !== 'completed';
+                if (statusChanged) {
+                    task.status = 'completed';
+                }
+                const nextTask = findNextTask(task);
+                const completionEvent = nextTask && timeToMinutes(nextTask.startTime) > taskEndMinutes
+                    ? 'break'
+                    : 'end';
+                if (statusChanged) await saveOraTask(task);
+                if (!task.email?.[completionEvent]?.sent) {
+                    if (completionEvent === 'break') await sendOraTaskBreakNotification(task, nextTask);
+                    else if (nextTask) await sendOraTaskTransitionNotification(task, nextTask);
+                    else await sendOraTaskCompletionNotification(task);
                 }
                 saveOraTasksLocally();
             }
-        });
+        }
         
         renderOraTasksList();
     };
@@ -1779,6 +1807,8 @@ async function sendOraTaskNotification(task, type) {
     }
 
     try {
+        await refreshOraTaskFromCloud(task);
+        if (task.email?.start?.sent) return;
         await sendOraEmail(
             `Task started: ${task.name}`,
             `Your task "${task.name}" started at ${task.startTime}.`
@@ -1802,6 +1832,8 @@ async function sendOraTaskTransitionNotification(completedTask, nextTask) {
     }
 
     try {
+        await refreshOraTaskFromCloud(completedTask);
+        if (completedTask.email?.end?.sent) return;
         await sendOraEmail(
             `Task completed: ${completedTask.name}`,
             `"${completedTask.name}" ended. Your next task, "${nextTask.name}", starts at ${nextTask.startTime}.`
@@ -1825,6 +1857,8 @@ async function sendOraTaskCompletionNotification(task) {
     }
 
     try {
+        await refreshOraTaskFromCloud(task);
+        if (task.email?.end?.sent) return;
         await sendOraEmail(
             `Task completed: ${task.name}`,
             `Your task "${task.name}" ended at ${task.endTime}.`
@@ -1845,6 +1879,8 @@ async function sendOraTaskBreakNotification(task, nextTask) {
     }
 
     try {
+        await refreshOraTaskFromCloud(task);
+        if (task.email?.break?.sent) return;
         await sendOraEmail(
             `Break time after ${task.name}`,
             `Your task "${task.name}" ended at ${task.endTime}. It is time for a break before "${nextTask.name}" starts at ${nextTask.startTime}.`
@@ -1872,13 +1908,27 @@ async function sendOraDailySummary() {
         return;
     }
     
-    const summary = oraDailyTasks
+    try {
+        await Promise.all(oraDailyTasks.map(task => refreshOraTaskFromCloud(task)));
+    } catch (error) {
+        console.error('Ora summary state refresh error:', error);
+        showToast('Could not retrieve the latest email status from the server.', 'warning');
+        return;
+    }
+
+    const pendingSummaryTasks = oraDailyTasks.filter(task => !task.email?.summary?.sent);
+    if (pendingSummaryTasks.length === 0) {
+        showToast('Daily summary email already sent.', 'info');
+        return;
+    }
+
+    const summary = pendingSummaryTasks
         .map(task => `${task.name}: ${task.startTime} - ${task.endTime}${task.description !== 'none' ? ` (${task.description})` : ''}`)
         .join('\n');
 
     try {
         await sendOraEmail(`Daily task summary - ${new Date()}`, summary);
-        await Promise.all(oraDailyTasks.map(task => markOraEmailSent(task, 'summary')));
+        await Promise.all(pendingSummaryTasks.map(task => markOraEmailSent(task, 'summary')));
         showToast('Daily summary email sent.', 'success');
     } catch (error) {
         console.error('Ora summary email error:', error);
